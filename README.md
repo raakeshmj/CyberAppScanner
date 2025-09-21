@@ -1,4 +1,5 @@
-🛡️ PrivacyGuard Pro: Hybrid APK Security Scanner
+## 🛡️ PrivacyGuard Pro: Hybrid APK Security Scanner
+
 An intelligent, context-aware security scanner for Android APKs that combines deep static analysis with an AI-powered malware detection engine.
 
 ## About The Project
