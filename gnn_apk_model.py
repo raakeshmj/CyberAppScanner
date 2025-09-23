@@ -1,6 +1,14 @@
 import numpy as np
 import tensorflow as tf
 
+import spektral
+dataset=spektral.datasets.citation.Citation(name='cora')
+graph=dataset[0]
+
+train_masks = dataset.mask_tr
+val_masks   = dataset.mask_va
+test_masks  = dataset.mask_te
+
 
 num_apks = 200
 num_features = 13
@@ -25,7 +33,7 @@ y = tf.constant(y, dtype=tf.int32)
 A = np.zeros((num_apks, num_apks), dtype=np.float32)
 for i in range(num_apks):
     for j in range(i, num_apks):
-        if np.any(X_int[i] & X_int[j]):  # share any permission/API
+        if np.any(X_int[i] & X_int[j]):  
             A[i, j] = 1
             A[j, i] = 1
 np.fill_diagonal(A, 1)
