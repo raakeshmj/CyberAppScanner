@@ -1,12 +1,12 @@
-import argparse
+from flask import Flask, request, jsonify
 import numpy as np
-from androguard.misc import AnalyzeAPK
 import tensorflow as tf
+from androguard.misc import AnalyzeAPK
 
-# ---- IMPORT CUSTOM GCN CODE ----
+# -------------------- FIXED GCN LAYER --------------------
 class GCNLayer(tf.keras.layers.Layer):
-    def __init__(self, units, activation=None, dropout_rate=0.0):
-        super().__init__()
+    def __init__(self, units, activation=None, dropout_rate=0.0, **kwargs):
+        super().__init__(**kwargs)
         self.units = units
         self.activation = activation
         self.dropout = tf.keras.layers.Dropout(dropout_rate)
@@ -16,12 +16,12 @@ class GCNLayer(tf.keras.layers.Layer):
         H = tf.matmul(A_norm, self.dense(X))
         if self.activation:
             H = self.activation(H)
-        H = self.dropout(H, training=training)
-        return H
+        return self.dropout(H, training=training)
 
+# -------------------- FIXED GCN MODEL --------------------
 class HardGCN(tf.keras.Model):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.gcn1 = GCNLayer(64, activation=tf.nn.relu, dropout_rate=0.3)
         self.gcn2 = GCNLayer(32, activation=tf.nn.relu, dropout_rate=0.3)
         self.output_layer = GCNLayer(2)
@@ -31,8 +31,18 @@ class HardGCN(tf.keras.Model):
         H = self.gcn2(H, A_norm, training=training)
         return self.output_layer(H, A_norm, training=training)
 
+# -------------------- LOAD MODEL WEIGHTS SAFELY --------------------
+model = HardGCN()
 
-# ---- YOUR 9 PERMISSION FEATURES ----
+# build model with dummy data so weights can be loaded
+dummy_X = np.zeros((1, 12), dtype=np.float32)
+dummy_A = np.array([[1.0]], dtype=np.float32)
+model(dummy_X, dummy_A, training=False)
+
+model.load_weights("hard_gcn_model.h5")   # ✅ loads correctly
+print("✅ Model weights loaded successfully!")
+
+# -------------------- PERMISSION VECTOR FEATURES --------------------
 VECTOR_FEATURES = [
     "permission:android.permission.INTERNET",
     "permission:android.permission.ACCESS_NETWORK_STATE",
@@ -45,78 +55,47 @@ VECTOR_FEATURES = [
     "permission:android.permission.ACCESS_FINE_LOCATION"
 ]
 
+def extract_features(apk_path):
+    a, d, dx = AnalyzeAPK(apk_path)
+    perms = a.get_permissions()
 
-def generate_permission_vector(apk_path):
-    print(f"[*] Analyzing '{apk_path}'...")
-    try:
-        a, d, dx = AnalyzeAPK(apk_path)
-        if not a:
-            print("[!] Failed to parse APK.")
-            return None
+    vector = np.zeros(len(VECTOR_FEATURES), dtype=float)
+    for i, feat in enumerate(VECTOR_FEATURES):
+        perm = feat.split(":")[1]
+        if perm in perms:
+            vector[i] = 1.0
 
-        requested = a.get_permissions()
-        print(f" -> Permissions found: {len(requested)}")
-
-        vector = np.zeros(len(VECTOR_FEATURES), dtype=float)
-        for i, feat in enumerate(VECTOR_FEATURES):
-            perm = feat.split(":")[1]
-            if perm in requested:
-                vector[i] = 1.0
-
-        return vector
-
-    except Exception as e:
-        print(f"[!] Error analyzing APK: {e}")
-        return None
-
-
-def predict_malware(vector):
-    # ---- LOAD MODEL ----
-    model = tf.keras.models.load_model("hard_gcn_model.h5", custom_objects={"GCNLayer": GCNLayer, "HardGCN": HardGCN})
-
-    # ---- PAD FEATURE VECTOR FROM 9 → 12 ----
-    X = np.pad(vector, (0, 12 - len(vector)))  # pad zeros
-    X = X.reshape(1, 12).astype(np.float32)
-
-    # ---- CREATE 1×1 GRAPH ----
+    X = np.pad(vector, (0, 12 - len(vector))).reshape(1, 12).astype(np.float32)
     A_norm = np.array([[1.0]], dtype=np.float32)
+    return X, A_norm
 
-    # ---- RUN INFERENCE ----
+# -------------------- FLASK API --------------------
+app = Flask(__name__)
+
+@app.route("/predict", methods=["POST"])
+def predict():
+    if "apk" not in request.files:
+        return jsonify({"error": "Upload an APK using form key 'apk'"}), 400
+
+    apk_file = request.files["apk"]
+    apk_path = "/tmp/uploaded.apk"
+    apk_file.save(apk_path)
+
+    X, A_norm = extract_features(apk_path)
     logits = model(X, A_norm, training=False).numpy()
     probs = tf.nn.softmax(logits, axis=1).numpy()[0]
-    malware_prob = probs[1]
 
-    print("\n========== Prediction ==========")
-    print(f"Malware Probability: {malware_prob:.4f}")
+    malware_prob = float(probs[1])
+    result = "MALWARE" if malware_prob >= 0.5 else "BENIGN"
 
-    if malware_prob >= 0.5:
-        print("🔴 **Result: MALWARE DETECTED**")
-    else:
-        print("🟢 **Result: BENIGN**")
+    return jsonify({
+        "result": result,
+        "malware_probability": round(malware_prob, 4)
+    })
 
-    print("================================\n")
-
-
-def main():
-    parser = argparse.ArgumentParser(description="APK Malware Detection using HardGCN")
-    parser.add_argument("apk_file", help="Path to target .apk")
-    args = parser.parse_args()
-
-    vector = generate_permission_vector(args.apk_file)
-    if vector is not None:
-        predict_malware(vector)
-
+@app.route("/")
+def home():
+    return "✅ HardGCN Malware Detection API Running"
 
 if __name__ == "__main__":
-    import sys
-
-    # If in Jupyter/Colab → avoid argparse conflict
-    if "ipykernel" in sys.modules:
-        class Args:
-            apk_file = "sample.apk"   # <- put your apk path here
-        args = Args()
-        vector = generate_permission_vector(args.apk_file)
-        if vector is not None:
-            predict_malware(vector)
-    else:
-        main()
+    app.run(host="0.0.0.0", port=5000)
