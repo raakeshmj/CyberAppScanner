@@ -3,7 +3,6 @@ import numpy as np
 import tensorflow as tf
 from androguard.misc import AnalyzeAPK
 
-# -------------------- FIXED GCN LAYER --------------------
 class GCNLayer(tf.keras.layers.Layer):
     def __init__(self, units, activation=None, dropout_rate=0.0, **kwargs):
         super().__init__(**kwargs)
@@ -18,7 +17,7 @@ class GCNLayer(tf.keras.layers.Layer):
             H = self.activation(H)
         return self.dropout(H, training=training)
 
-# -------------------- FIXED GCN MODEL --------------------
+
 class HardGCN(tf.keras.Model):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -31,18 +30,18 @@ class HardGCN(tf.keras.Model):
         H = self.gcn2(H, A_norm, training=training)
         return self.output_layer(H, A_norm, training=training)
 
-# -------------------- LOAD MODEL WEIGHTS SAFELY --------------------
+
 model = HardGCN()
 
-# build model with dummy data so weights can be loaded
+
 dummy_X = np.zeros((1, 12), dtype=np.float32)
 dummy_A = np.array([[1.0]], dtype=np.float32)
 model(dummy_X, dummy_A, training=False)
 
-model.load_weights("hard_gcn_model.h5")   # ✅ loads correctly
+model.load_weights("hard_gcn_model.h5")   
 print("✅ Model weights loaded successfully!")
 
-# -------------------- PERMISSION VECTOR FEATURES --------------------
+
 VECTOR_FEATURES = [
     "permission:android.permission.INTERNET",
     "permission:android.permission.ACCESS_NETWORK_STATE",
@@ -69,7 +68,7 @@ def extract_features(apk_path):
     A_norm = np.array([[1.0]], dtype=np.float32)
     return X, A_norm
 
-# -------------------- FLASK API --------------------
+
 app = Flask(__name__)
 
 @app.route("/predict", methods=["POST"])
